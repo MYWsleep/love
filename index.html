@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>致你 · 我爱你</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#08060c}
+  body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+
+  #rain,#heart{position:fixed;inset:0;display:block}
+  #rain{opacity:.40}
+  #heart{filter:drop-shadow(0 0 14px rgba(255,60,135,.9))}
+
+  /* 中心文字 */
+  .center{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+    z-index:6;text-align:center;pointer-events:none;white-space:nowrap;
+  }
+  .cn{
+    display:inline-block;
+    font-family:"Cambria Math","Segoe UI Symbol","STIX Two Math","Times New Roman",serif;
+    font-style:italic;
+    font-size:clamp(30px,4.2vw,60px);
+    font-weight:600;
+    letter-spacing:.04em;
+    color:#fff;
+    text-shadow:
+      0 0 10px rgba(255,255,255,.95),
+      0 0 26px rgba(255,95,150,.95),
+      0 0 60px rgba(255,55,125,.75),
+      0 0 110px rgba(255,40,110,.45);
+    animation:pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{opacity:.9;transform:scale(1)}
+    50%{opacity:1;transform:scale(1.035)}
+  }
+
+  /* 左下角小字 */
+  .side{
+    position:fixed;left:4.5vw;bottom:11vh;z-index:6;
+    color:#ffb9cd;
+    font-size:clamp(13px,1.35vw,20px);
+    letter-spacing:.34em;
+    opacity:.72;
+    text-shadow:0 0 14px rgba(255,90,150,.85);
+    pointer-events:none;
+  }
+
+  /* 四角氛围 */
+  .vignette{
+    position:fixed;inset:0;z-index:4;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 50%,transparent 42%,rgba(6,4,10,.82) 100%);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="rain"></canvas>
+<canvas id="heart"></canvas>
+<div class="vignette"></div>
+<div class="center"><div class="cn">𝑀𝑢𝑟𝑎𝑡</div></div>
+<div class="side">要说的话</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var rainCv = document.getElementById('rain');
+  var heartCv = document.getElementById('heart');
+  var rctx = rainCv.getContext('2d');
+  var hctx = heartCv.getContext('2d');
+
+  var CHARS = 'LOVE'.split('');
+  var HEART_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+  var SIZES = [9, 11, 13, 16, 19];
+
+  var W = 0, H = 0, DPR = 1;
+  var drops = [];
+  var buckets = [];        // 按字号分组的爱心粒子
+  var hcx = 0, hcy = 0, hscale = 0;
+  var frame = 0;
+
+  /* 隐式爱心曲线：(x²+y²-1)³ - x²y³ = 0，小于 0 在内部 */
+  function heartField(x, y) {
+    var a = x * x + y * y - 1;
+    return a * a * a - x * x * y * y * y;
+  }
+
+  /* ---------------- 背景字符雨 ---------------- */
+  function initRain() {
+    var FONT = 15;
+    var cols = Math.ceil(W / FONT) + 1;
+    drops = [];
+    for (var i = 0; i < cols; i++) {
+      drops.push({
+        x: i * FONT + FONT * 0.5,
+        y: Math.random() * H,
+        speed: 0.85 + Math.random() * 2.3,
+        len: 9 + Math.floor(Math.random() * 15),
+        seed: Math.floor(Math.random() * 1000)
+      });
+    }
+  }
+
+  function drawRain() {
+    rctx.clearRect(0, 0, W, H);
+    rctx.font = '15px Consolas,"Courier New",monospace';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'top';
+
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      for (var k = 0; k < d.len; k++) {
+        var y = d.y - k * 17;
+        if (y < -22 || y > H + 22) continue;
+        var t = 1 - k / d.len;                       // 头部最亮
+        var a = 0.03 + t * t * 0.58;
+        var li = 34 + t * 44;
+        rctx.fillStyle = 'hsla(' + (326 + t * 14) + ',95%,' + li.toFixed(0) + '%,' + a.toFixed(3) + ')';
+        var ci = (d.seed + k * 7 + (frame >> 2)) % CHARS.length;
+        rctx.fillText(CHARS[ci], d.x, y);
+      }
+      d.y += d.speed;
+      if (d.y - d.len * 17 > H) {
+        d.y = -Math.random() * H * 0.5;
+        d.speed = 0.85 + Math.random() * 2.3;
+        d.len = 9 + Math.floor(Math.random() * 15);
+        d.seed = Math.floor(Math.random() * 1000);
+      }
+    }
+  }
+
+  // 心形参数方程（经典 3D 心形投影），t ∈ [0, 2π)
+  function heartPoint(t) {
+    var x = 16 * Math.pow(Math.sin(t), 3);
+    var y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    return { x: x / 15.2, y: y / 17.0 };   // 归一化到约 [-1,1]
+  }
+
+  /* ---------------- 爱心粒子 ---------------- */
+  function initHeart() {
+    hscale = Math.min(W, H) * 0.36;
+    hcx = W * 0.5;
+    hcy = H * 0.50;
+
+    buckets = [[], [], [], [], []];
+    var budget = Math.round(Math.min(2600, (W * H) / 700));
+
+    for (var i = 0; i < budget; i++) {
+      // 沿心形轮廓取点，越靠内越稀疏（用半径收缩做填充感）
+      var t = (i / budget) * Math.PI * 2 + (Math.random() - 0.5) * 0.05;
+      var pt = heartPoint(t);
+
+      // r 从轮廓往里收缩：轮廓 1.0，内部随机
+      var shrink = 1 - Math.pow(Math.random(), 4.2) * 0.84;
+      var lx = pt.x * shrink;
+      var ly = pt.y * shrink;
+
+      var edge = 1 - shrink;                  // 1 = 贴轮廓
+      var bi = Math.min(4, Math.floor(Math.random() * 3 + edge * 2.2));
+      var white = Math.random() < 0.26;
+
+      var hue = 334 - edge * 18;
+      var sat = white ? 58 : 96;
+      var lig = white ? 92 : (54 + edge * 22);
+      var colorStr = 'hsl(' + hue.toFixed(0) + ',' + sat + '%,' + lig.toFixed(0) + '%)';
+
+      var px = hcx + lx * hscale;
+      var py = hcy - ly * hscale;
+
+      buckets[bi].push({
+        tx: px, ty: py,
+        x: px, y: py,
+        ch: HEART_CHARS[Math.floor(Math.random() * HEART_CHARS.length)],
+        color: colorStr,
+        alpha: (0.5 + Math.random() * 0.5) * (0.78 + edge * 0.4),
+        edge: edge,
+        phase: Math.random() * Math.PI * 2,
+        ease: 0.055 + Math.random() * 0.11,
+        charCd: Math.floor(Math.random() * 160)
+      });
+    }
+  }
+
+  function drawHeart() {
+    hctx.clearRect(0, 0, W, H);
+    hctx.textAlign = 'center';
+    hctx.textBaseline = 'middle';
+
+    for (var b = 0; b < buckets.length; b++) {
+      var list = buckets[b];
+      if (!list.length) continue;
+      hctx.font = '700 ' + SIZES[b] + 'px Consolas,"PingFang SC",monospace';
+
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+
+        // 缓动飞向目标点
+        p.x += (p.tx - p.x) * p.ease;
+        p.y += (p.ty - p.y) * p.ease;
+
+        // 呼吸起伏
+        var br = Math.sin(frame * 0.021 + p.phase) * 2.2;
+        // 明暗闪烁
+        var a = p.alpha * (0.68 + 0.32 * Math.sin(frame * 0.048 + p.phase));
+
+        // 字符跳动（闪烁感）
+        if (--p.charCd <= 0) {
+          p.ch = HEART_CHARS[Math.floor(Math.random() * HEART_CHARS.length)];
+          p.charCd = 45 + Math.floor(Math.random() * 190);
+        }
+
+        hctx.globalAlpha = a < 0 ? 0 : (a > 1 ? 1 : a);
+        hctx.fillStyle = p.color;
+        hctx.fillText(p.ch, p.x, p.y + br);
+      }
+    }
+    hctx.globalAlpha = 1;
+  }
+
+  /* ---------------- 尺寸 / 循环 ---------------- */
+  function positionText() {
+    var el = document.querySelector('.center');
+    if (!el) return;
+    el.style.left = hcx + 'px';
+    el.style.top = (hcy + hscale * 0.13) + 'px';
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    [rainCv, heartCv].forEach(function (c) {
+      c.width = Math.floor(W * DPR);
+      c.height = Math.floor(H * DPR);
+      c.style.width = W + 'px';
+      c.style.height = H + 'px';
+    });
+    rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    initRain();
+    initHeart();
+    positionText();
+  }
+
+  var last = 0;
+  function loop(ts) {
+    // 限制到约 40fps，低配机器更顺
+    if (ts - last < 24) { requestAnimationFrame(loop); return; }
+    last = ts;
+    frame++;
+    drawRain();
+    drawHeart();
+    requestAnimationFrame(loop);
+  }
+
+  var rt = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(rt);
+    rt = setTimeout(resize, 180);
+  });
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
